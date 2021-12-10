@@ -30,7 +30,7 @@ main :: proc() {
                 assert(len(line) > 0)
 
                 line_left := line
-                number_one_past_end := strings.index_proc(line_left, proc(ch: rune) -> bool do return !unicode.is_number(ch))
+                number_one_past_end := strings.index_proc(line_left, proc(ch: rune) -> bool {return !unicode.is_number(ch)})
 
                 number_string: string
 
