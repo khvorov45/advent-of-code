@@ -8,7 +8,7 @@
       "type": "cppvsdbg",
       "request": "launch",
       "name": "Debug",
-      "program": "${workspaceFolder}/2021-6.exe",
+      "program": "${workspaceFolder}/2021-8.exe",
       "args": [],
       "cwd": "${workspaceFolder}"
     }
