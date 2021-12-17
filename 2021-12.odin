@@ -88,24 +88,26 @@ main :: proc() {
 	assert(start_id != CaveId(-1))
 
 	Node :: struct {
-		id:      CaveId,
-		parents: [dynamic]CaveId,
+		id:   CaveId,
+		path: struct {
+			cave_ids:                 [dynamic]CaveId,
+			small_cave_visited_twice: bool,
+		},
 	}
 
 	nodes: [dynamic]Node
-	append(&nodes, Node{start_id, nil})
+	append(&nodes, Node{start_id, {nil, false}})
 
 	total_paths := 0
 
 	for len(nodes) > 0 {
-
 
 		node := pop(&nodes)
 
 		for connection in caves[node.id].connections {
 
 			is_in_parents := false
-			for parent in node.parents {
+			for parent in node.path.cave_ids {
 				if parent == connection {
 					is_in_parents = true
 					break
@@ -113,17 +115,38 @@ main :: proc() {
 			}
 
 			connected_cave := caves[connection]
+
+			can_go := false
+			small_cave_visited := node.path.small_cave_visited_twice
 			if !is_in_parents || connected_cave.big {
+				can_go = true
+			} else if !small_cave_visited && connected_cave.name != "start" {
+				can_go = true
+				small_cave_visited = true
+			}
+
+			if can_go {
 
 				if connected_cave.name == "end" {
+					assert(!is_in_parents)
 					total_paths += 1
+
+					/*fmt.printf("start,")
+					for parent in node.path.cave_ids {
+						parent_cave := caves[parent]
+						if parent_cave.name != "start" {
+							fmt.printf("{},", parent_cave.name)
+						}
+					}
+					fmt.printf("{},end\n", caves[node.id].name)*/
+
 				} else {
 					new_parents: [dynamic]CaveId
-					for parent in node.parents {
+					for parent in node.path.cave_ids {
 						append(&new_parents, parent)
 					}
 					append(&new_parents, node.id)
-					append(&nodes, Node{connection, new_parents})
+					append(&nodes, Node{connection, {new_parents, small_cave_visited}})
 				}
 
 			}
