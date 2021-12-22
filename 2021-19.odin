@@ -65,13 +65,151 @@ main :: proc() {
 
 	}
 
-	fmt.println(scanners)
+	face_forward: matrix[3, 3]int
+	face_forward[0] = [3]int{1, 0, 0}
+	face_forward[1] = [3]int{0, 1, 0}
+	face_forward[2] = [3]int{0, 0, 1}
 
-	identity: matrix[3, 3]int
-	identity[0] = [3]int{1, 0, 0}
-	identity[1] = [3]int{0, 1, 0}
-	identity[2] = [3]int{0, 0, 1}
+	face_right: matrix[3, 3]int
+	face_right[0] = [3]int{0, -1, 0}
+	face_right[1] = [3]int{1, 0, 0}
+	face_right[2] = [3]int{0, 0, 1}
 
-	fmt.println(m * [3]int{5, 6, 7})
+	face_left: matrix[3, 3]int
+	face_left[0] = [3]int{0, 1, 0}
+	face_left[1] = [3]int{-1, 0, 0}
+	face_left[2] = [3]int{0, 0, 1}
+
+	face_back: matrix[3, 3]int
+	face_back[0] = [3]int{-1, 0, 0}
+	face_back[1] = [3]int{0, -1, 0}
+	face_back[2] = [3]int{0, 0, 1}
+
+	face_up: matrix[3, 3]int
+	face_up[0] = [3]int{0, 0, 1}
+	face_up[1] = [3]int{0, 1, 0}
+	face_up[2] = [3]int{-1, 0, 0}
+
+	face_down: matrix[3, 3]int
+	face_down[0] = [3]int{0, 0, -1}
+	face_down[1] = [3]int{0, 1, 0}
+	face_down[2] = [3]int{1, 0, 0}
+
+	face_directions: [6]matrix[3,
+	3]int = {face_forward, face_right, face_left, face_back, face_up, face_down}
+
+	tilt_none: matrix[3, 3]int
+	tilt_none[0] = [3]int{1, 0, 0}
+	tilt_none[1] = [3]int{0, 1, 0}
+	tilt_none[2] = [3]int{0, 0, 1}
+
+	tilt_left: matrix[3, 3]int
+	tilt_left[0] = [3]int{1, 0, 0}
+	tilt_left[1] = [3]int{0, 0, -1}
+	tilt_left[2] = [3]int{0, 1, 0}
+
+	tilt_right: matrix[3, 3]int
+	tilt_right[0] = [3]int{1, 0, 0}
+	tilt_right[1] = [3]int{0, 0, 1}
+	tilt_right[2] = [3]int{0, -1, 0}
+
+	tilt_upside_down: matrix[3, 3]int
+	tilt_upside_down[0] = [3]int{1, 0, 0}
+	tilt_upside_down[1] = [3]int{0, -1, 0}
+	tilt_upside_down[2] = [3]int{0, 0, -1}
+
+	tilt_directions: [4]matrix[3,
+	3]int = {tilt_none, tilt_left, tilt_right, tilt_upside_down}
+
+	scanners_transformed: [dynamic]int
+	append(&scanners_transformed, 0)
+
+	for len(scanners_transformed) < len(scanners) {
+
+		best_match_count := 0
+		best_match_scanner_index := -1
+		best_match_face: matrix[3, 3]int
+		best_match_tilt: matrix[3, 3]int
+		best_match_translation: [3]int
+
+		search: for test_scanner, test_scanner_index in &scanners {
+
+			already_transformed := false
+			for scanner_transformed in scanners_transformed {
+				if scanner_transformed == test_scanner_index {
+					already_transformed = true
+					break
+				}
+			}
+
+			if !already_transformed {
+
+				for compare_scanner_index in scanners_transformed {
+
+					compare_scanner := scanners[compare_scanner_index]
+
+					for face_direction, face_direction_index in face_directions {
+						for tilt_direction, tilt_direction_index in tilt_directions {
+
+							for test_overlap in test_scanner {
+
+								test_overlap_turned := face_direction * test_overlap
+								test_overlap_rotated := tilt_direction * test_overlap_turned
+
+								for compare_overlap in compare_scanner {
+
+									translation := compare_overlap - test_overlap_rotated
+									match_count := 0
+
+									for test_reading in test_scanner {
+
+										test_reading_turned := face_direction * test_reading
+										test_reading_rotated := tilt_direction * test_reading_turned
+										test_reading_translated := test_reading_rotated + translation
+
+										for compare_reading in compare_scanner {
+											if (compare_reading == test_reading_translated) {
+												match_count += 1
+											}
+										}
+
+									}
+
+									if best_match_count < match_count {
+										best_match_count = match_count
+										best_match_scanner_index = test_scanner_index
+										best_match_face = face_direction
+										best_match_tilt = tilt_direction
+										best_match_translation = translation
+									}
+
+									if match_count >= 12 {
+										break search
+									}
+
+								}
+							}
+
+						}
+					}
+
+				}
+
+			}
+
+		}
+
+		fmt.println(scanners_transformed, best_match_count, best_match_scanner_index)
+		assert(best_match_count >= 12)
+
+		for reading in &scanners[best_match_scanner_index] {
+			reading_turned := best_match_face * reading
+			reading_rotated := best_match_tilt * reading_turned
+			reading_translated := reading_rotated + best_match_translation
+			reading = reading_translated
+		}
+		append(&scanners_transformed, best_match_scanner_index)
+
+	}
 
 }
