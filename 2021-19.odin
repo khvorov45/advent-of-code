@@ -11,7 +11,7 @@ main :: proc() {
 
 	input_left: string
 	{
-		input, ok := os.read_entire_file("2021-19-ex.txt")
+		input, ok := os.read_entire_file("2021-19.txt")
 		assert(ok)
 		input_string := string(input)
 		input_left = input_string
@@ -124,6 +124,9 @@ main :: proc() {
 	scanners_transformed: [dynamic]int
 	append(&scanners_transformed, 0)
 
+	scanner_positions: [dynamic][3]int
+	append(&scanner_positions, [3]int{0, 0, 0})
+
 	for len(scanners_transformed) < len(scanners) {
 
 		best_match_count := 0
@@ -144,8 +147,11 @@ main :: proc() {
 
 			if !already_transformed {
 
-				for compare_scanner_index in scanners_transformed {
+				for compare_scanner_index_index := len(scanners_transformed) - 1;
+				    compare_scanner_index_index >= 0;
+				    compare_scanner_index_index -= 1 {
 
+					compare_scanner_index := scanners_transformed[compare_scanner_index_index]
 					compare_scanner := scanners[compare_scanner_index]
 
 					for face_direction, face_direction_index in face_directions {
@@ -209,7 +215,53 @@ main :: proc() {
 			reading = reading_translated
 		}
 		append(&scanners_transformed, best_match_scanner_index)
+		append(&scanner_positions, best_match_translation)
 
 	}
+
+	unique_readings: [dynamic][3]int
+
+	for scanner in scanners {
+		for reading in scanner {
+			in_unique := false
+			for unique_reading in unique_readings {
+				if unique_reading == reading {
+					in_unique = true
+					break
+				}
+			}
+			if !in_unique {
+				append(&unique_readings, reading)
+			}
+		}
+	}
+
+
+	slice.sort_by(
+		unique_readings[:],
+		proc(r1: [3]int, r2: [3]int) -> bool {return r1.x < r2.x},
+	)
+
+	for reading in unique_readings {
+		fmt.println(reading)
+	}
+
+	fmt.println(len(unique_readings))
+
+	fmt.println(scanner_positions)
+
+	max_delta := 0
+
+	for r1_index in 0 ..< len(scanner_positions) {
+		r1 := scanner_positions[r1_index]
+		for r2_index in r1_index + 1 ..< len(scanner_positions) {
+			r2 := scanner_positions[r2_index]
+			delta := r1 - r2
+			manhattan_distance := abs(delta.x) + abs(delta.y) + abs(delta.z)
+			max_delta = max(max_delta, manhattan_distance)
+		}
+	}
+
+	fmt.println(max_delta)
 
 }
