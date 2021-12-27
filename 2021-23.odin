@@ -4,6 +4,8 @@ import "core:fmt"
 import "core:slice"
 import "core:time"
 
+// Taken from https://github.com/Mesoptier/advent-of-code-2021/blob/master/src/days/day23.rs
+
 ROOM_COUNT :: 4
 ROOM_SIZE :: 4
 HALLWAY_LENGTH :: 11
