@@ -5,26 +5,11 @@ import "core:slice"
 import "core:time"
 
 ROOM_COUNT :: 4
+ROOM_SIZE :: 4
 HALLWAY_LENGTH :: 11
 ROOM_HALLWAY_POSITIONS: [4]int : {2, 4, 6, 8}
 AMP_COUNT :: 8
 
-Position :: union {
-	Hallway,
-	Room,
-}
-
-Hallway :: distinct int
-
-Room :: struct {
-	room:  int,
-	front: bool,
-}
-
-Amp :: struct {
-	kind: AmpKind,
-	pos:  Position,
-}
 
 AmpKind :: enum {
 	A,
@@ -33,462 +18,424 @@ AmpKind :: enum {
 	D,
 }
 
-Amps :: [AMP_COUNT]Amp
-
-Node :: struct {
-	amps:      Amps,
-	occupancy: Occupancy,
-}
-
-Occupancy :: struct {
+State :: struct {
 	hallway: [HALLWAY_LENGTH]Maybe(AmpKind),
-	rooms:   [ROOM_COUNT]struct {
-		front, back: Maybe(AmpKind),
-	},
+	rooms: [ROOM_COUNT][ROOM_SIZE]Maybe(AmpKind),
 }
 
-get_needed_room_index :: proc(amp_kind: AmpKind) -> int {
+Transition :: struct {
+	state: State,
+	cost: int,
+}
+
+get_target_room_index :: proc(amp_kind: AmpKind) -> int {
 	return int(amp_kind)
 }
 
-get_cost_from_steps :: proc(step_count: int, amp_kind: AmpKind) -> int {
-	cost := step_count
+get_energy :: proc(amp_kind: AmpKind) -> int {
+	energy := 1
 	switch amp_kind {
 	case .A:
-		cost *= 1
 	case .B:
-		cost *= 10
+		energy *= 10
 	case .C:
-		cost *= 100
+		energy *= 100
 	case .D:
-		cost *= 1000
+		energy *= 1000
 	}
-	return cost
+	return energy
 }
 
-estimate_cheapest_cost :: proc(amps: Amps) -> int {
+from_room_index :: proc(room_index: int) -> AmpKind {
+	assert(room_index >= 0 && room_index < ROOM_COUNT)
+	return AmpKind(room_index)
+}
 
-	est_cost := 0
-	room_hallway_positions := ROOM_HALLWAY_POSITIONS
+encode :: proc(state: State) -> u64 {
 
-	for amp in amps {
-
-		steps := 0
-
-		needed_room_index := get_needed_room_index(amp.kind)
-		needed_hallway_index := room_hallway_positions[needed_room_index]
-
-		switch pos in amp.pos {
-		case Room:
-			room_hallway_index := room_hallway_positions[pos.room]
-			if room_hallway_index != needed_hallway_index {
-				steps += abs(room_hallway_index - needed_room_index) + 2
-				if !pos.front {
-					steps += 1
-				}
-			}
-		case Hallway:
-			steps += abs(needed_hallway_index - int(pos)) + 1
+	encode_space :: proc(space: Maybe(AmpKind)) -> u64 {
+		result: u64 = 0
+		if space != nil {
+			result = u64(get_target_room_index(space.(AmpKind)) + 1)
 		}
-
-		cost := get_cost_from_steps(steps, amp.kind)
-
-		est_cost += cost
+		return result
 	}
 
-	return est_cost
+	get_new_result :: proc(old: u64, space: Maybe(AmpKind)) -> u64 {
+		result := old * u64(5) + encode_space(space)
+		return result
+	}
+
+	result: u64 = 0
+	for room in state.rooms {
+		for room_slot in room {
+			result = get_new_result(result, room_slot)
+		}
+	}
+	for hallway in state.hallway {
+		result = get_new_result(result, hallway)
+	}
+
+	return result
 }
 
-print_amps :: proc(amps: Amps) {
-	for hall_index in 0 ..< HALLWAY_LENGTH {
-		found_amp: Maybe(Amp)
-		for amp in amps {
-			if amp_hall, ok := amp.pos.(Hallway); ok {
-				if int(amp_hall) == hall_index {
-					found_amp = amp
+decode :: proc(encoded: u64) -> State {
+
+	state: State
+
+	decode_space :: proc(encoded_space: u64) -> Maybe(AmpKind) {
+		result: Maybe(AmpKind)
+		if encoded_space != 0 {
+			assert(encoded_space >= 1 && encoded_space <= 4)
+			result = AmpKind(encoded_space - 1)
+		}
+		return result
+	}
+
+	next_space :: proc(cur_encoded: u64) -> (space: Maybe(AmpKind), next_encoded: u64) {
+		encoded_space := cur_encoded % 5
+		next_encoded = cur_encoded / 5
+		space = decode_space(encoded_space)
+		return space, next_encoded
+	}
+
+	cur_encoded := encoded
+
+	for hallway_index := len(state.hallway) - 1; hallway_index >= 0; hallway_index -= 1 {
+		state.hallway[hallway_index], cur_encoded = next_space(cur_encoded)
+	}
+
+	for room_index := len(state.rooms) - 1; room_index >= 0; room_index -= 1 {
+		room := &state.rooms[room_index]
+		for room_slot := len(room) - 1; room_slot >= 0; room_slot -= 1 {
+			room[room_slot], cur_encoded = next_space(cur_encoded)
+		}
+	}
+
+	return state
+}
+
+is_room_enterable :: proc(state: State, room_index: int) -> bool {
+	result := true
+	for slot in state.rooms[room_index] {
+		if slot != nil {
+			if get_target_room_index(slot.(AmpKind)) != room_index {
+				result = false
+				break
+			}
+		}
+	}
+	return result
+}
+
+is_room_exitable :: proc(state: State, room_index: int) -> bool {
+	result := !is_room_enterable(state, room_index)
+	return result
+}
+
+get_room_hallway_position :: proc(room_index: int) -> int {
+	room_hallway_position := ROOM_HALLWAY_POSITIONS
+	return room_hallway_position[room_index]
+}
+
+is_above_room :: proc(hallway_index: int) -> bool {
+	result := false
+	for pos in ROOM_HALLWAY_POSITIONS {
+		if pos == hallway_index {
+			result = true
+			break
+		}
+	}
+	return result
+}
+
+is_hallway_clear :: proc(state: State, start: int, end: int) -> bool {
+	result := true
+	if start != end {
+		step := start < end ? 1 : -1
+		for pos := start + step; pos != end + step; pos += step {
+			if state.hallway[pos] != nil {
+				result = false
+				break
+			}
+		}
+	}
+	return result
+}
+
+room_to_hallway_transitions :: proc(state: State, storage: ^[dynamic]Transition) {
+
+	for room, room_index in state.rooms {
+		if is_room_exitable(state, room_index) {
+
+			topmost_kind: AmpKind
+			topmost_depth: int
+			for slot, slot_index in room {
+				if slot != nil {
+					topmost_kind = slot.(AmpKind)
+					topmost_depth = slot_index
 					break
 				}
 			}
-		}
-		if found_amp == nil {
-			fmt.print('.')
-		} else {
-			fmt.print(found_amp.(Amp).kind)
-		}
-	}
-	fmt.print("\n  ")
 
-	for room_index in 0 ..< ROOM_COUNT {
-		found_amp: Maybe(Amp)
-		for amp in amps {
-			if amp_room, ok := amp.pos.(Room); ok {
-				if amp_room.room == room_index && amp_room.front {
-					found_amp = amp
-					break
+			cur_hallway_index := get_room_hallway_position(room_index)
+
+			start := [2]int{cur_hallway_index + 1, cur_hallway_index - 1}
+			steps := [2]int{1, -1}
+			stops := [2]int{len(state.hallway), -1}
+
+			for start, dir_index in start {
+
+				step := steps[dir_index]
+				stop := stops[dir_index]
+
+				step_count := 1 + topmost_depth
+
+				for cur_hallway_index := start; cur_hallway_index != stop; cur_hallway_index += step {
+					if state.hallway[cur_hallway_index] == nil {
+						step_count += 1
+						if !is_above_room(cur_hallway_index) {
+							energy := step_count * get_energy(topmost_kind)
+							new_state := state
+							new_state.hallway[cur_hallway_index], new_state.rooms[room_index][topmost_depth] =
+								new_state.rooms[room_index][topmost_depth], new_state.hallway[cur_hallway_index]
+							transition := Transition{new_state, energy}
+							append(storage, transition)
+						}
+					} else {
+						break
+					}
 				}
-			}
-		}
-		if found_amp == nil {
-			fmt.print('.')
-		} else {
-			fmt.print(found_amp.(Amp).kind)
-		}
-		fmt.print(' ')
-	}
-	fmt.print("\n  ")
 
-	for room_index in 0 ..< ROOM_COUNT {
-		found_amp: Maybe(Amp)
-		for amp in amps {
-			if amp_room, ok := amp.pos.(Room); ok {
-				if amp_room.room == room_index && !amp_room.front {
-					found_amp = amp
-					break
-				}
 			}
+
 		}
-		if found_amp == nil {
-			fmt.print('.')
-		} else {
-			fmt.print(found_amp.(Amp).kind)
-		}
-		fmt.print(' ')
 	}
 
-	fmt.print('\n')
 }
 
-get_occupancy :: proc(amps: Amps) -> Occupancy {
-	occupancy: Occupancy
-	for amp in amps {
-		switch pos in amp.pos {
-		case Room:
-			if pos.front {
-				occupancy.rooms[pos.room].front = amp.kind
+hallway_to_room_transitions :: proc(state: State, storage: ^[dynamic]Transition) {
+
+	for hallway_slot, hallway_index in state.hallway {
+
+		if hallway_slot != nil {
+
+			amp := hallway_slot.(AmpKind)
+			target_room_index := get_target_room_index(amp)
+
+			if is_room_enterable(state, target_room_index) {
+
+				target_hallway_index := get_room_hallway_position(target_room_index)
+
+				if is_hallway_clear(state, hallway_index, target_hallway_index) {
+
+					target_room := state.rooms[target_room_index]
+
+					target_room_depth: int
+					for slot, slot_index in target_room {
+						if slot == nil {
+							target_room_depth = slot_index
+						}
+					}
+
+					steps := target_room_depth + 1 + abs(hallway_index - target_hallway_index)
+					energy := steps * get_energy(amp)
+
+					new_state := state
+					new_state.rooms[target_room_index][target_room_depth], new_state.hallway[hallway_index] =
+						new_state.hallway[hallway_index], new_state.rooms[target_room_index][target_room_depth]
+
+					transition := Transition{new_state, energy}
+
+					append(storage, transition)
+
+				}
+
+			}
+
+		}
+
+	}
+
+}
+
+estimate_cost :: proc(state: State) -> int {
+
+	cost := 0
+
+	// NOTE(sen) Cost to move from where they are to the space above target
+	// and for target amps to enter the rooms
+	for room, room_index in state.rooms {
+
+		room_hallway_position := get_room_hallway_position(room_index)
+
+		// NOTE(sen) First from bottom that's either nil or has the wrong amp
+		deepest_slot_that_needs_to_move := len(room) - 1
+		for ; deepest_slot_that_needs_to_move >= 0; deepest_slot_that_needs_to_move -= 1 {
+
+			slot := room[deepest_slot_that_needs_to_move]
+
+			if slot != nil {
+
+				amp := slot.(AmpKind)
+				amp_target := get_target_room_index(amp)
+
+				if amp_target != room_index {
+					break
+				}
+
+
 			} else {
-				occupancy.rooms[pos.room].back = amp.kind
+				break
 			}
-		case Hallway:
-			occupancy.hallway[int(pos)] = amp.kind
+
 		}
+
+		for slot_index := deepest_slot_that_needs_to_move; slot_index >= 0; slot_index -= 1 {
+
+			slot := room[slot_index]
+
+			// NOTE(sen) Target amp should move in here at some point
+			target_amp := from_room_index(room_index)
+			steps := slot_index + 1
+			cost += steps * get_energy(target_amp)
+
+			if slot != nil {
+
+				// NOTE(sen) This one needs to exit the room and move to the space above target
+				amp := slot.(AmpKind)
+				amp_target := get_target_room_index(amp)
+				amp_target_hallway := get_room_hallway_position(amp_target)
+
+				hallway_steps := 2
+				if amp_target != room_index {
+					hallway_steps = abs(amp_target_hallway - room_hallway_position)
+				}
+				steps := slot_index + 1 + hallway_steps
+
+				cost += steps * get_energy(amp)
+			}
+
+		}
+
 	}
-	return occupancy
+
+	// NOTE(sen) Energy for hallway amps to move to space above target
+	for hallway, hallway_index in state.hallway {
+
+		if hallway != nil {
+
+			amp := hallway.(AmpKind)
+			amp_target_room_index := get_target_room_index(amp)
+			amp_target_hallway_index := get_room_hallway_position(amp_target_room_index)
+
+			steps := abs(amp_target_hallway_index - hallway_index)
+
+			cost += steps * get_energy(amp)
+		}
+
+	}
+
+	return cost
+
 }
 
 main :: proc() {
 
-	nodes: [dynamic]Node
-	{
-		init_top := [ROOM_COUNT]AmpKind{.B, .C, .A, .D}
-		init_bot := [ROOM_COUNT]AmpKind{.B, .C, .D, .A}
-		first_node: Node
-		for amp, amp_index in &first_node.amps {
-			if amp_index < ROOM_COUNT {
-				amp = Amp{init_top[amp_index], Room{amp_index, true}}
-			} else {
-				room_index := amp_index - ROOM_COUNT
-				amp = Amp{init_bot[room_index], Room{room_index, false}}
-			}
+	time_program_start := time.now()
+
+	target_state: State
+	target_state.rooms = [ROOM_COUNT][ROOM_SIZE]Maybe(AmpKind){
+		{.A, .A, .A, .A},
+		{.B, .B, .B, .B},
+		{.C, .C, .C, .C},
+		{.D, .D, .D, .D},
+	}
+	assert(target_state == decode(encode(target_state)))
+
+	init_state: State
+	when false {
+		init_state.rooms = [ROOM_COUNT][ROOM_SIZE]Maybe(AmpKind){
+			{.B, .D, .D, .A},
+			{.C, .C, .B, .D},
+			{.B, .B, .A, .C},
+			{.D, .A, .C, .A},
 		}
-		for room, room_index in &first_node.occupancy.rooms {
-			room.front = init_top[room_index]
-			room.back = init_bot[room_index]
+	} else {
+		init_state.rooms = [ROOM_COUNT][ROOM_SIZE]Maybe(AmpKind){
+			{.B, .D, .D, .B},
+			{.C, .C, .B, .C},
+			{.A, .B, .A, .D},
+			{.D, .A, .C, .A},
 		}
-		first_node.occupancy = get_occupancy(first_node.amps)
-		append(&nodes, first_node)
 	}
 
-	came_from: map[Amps]Amps
-
-	costs_from_start: map[Amps]int
-	costs_from_start[nodes[0].amps] = 0
-
-	total_costs: map[Amps]int
-	total_costs[nodes[0].amps] = estimate_cheapest_cost(nodes[0].amps)
-
-	Move :: struct {
-		amp_index: int,
-		pos:       Position,
-		cost:      int,
+	OpenSetEntry :: struct {
+		state: State,
+		f_score: int,
 	}
-	possible_moves: [dynamic]Move
 
-	time_get_node := 0.0
-	time_total := 0.0
+	open_set: [dynamic]OpenSetEntry
+	append(&open_set, OpenSetEntry{init_state, estimate_cost(init_state)})
 
-	for iteration_index := 1; len(nodes) > 0; iteration_index += 1 {
+	g_score: map[State]int
+	g_score[init_state] = 0
 
-		iteration_start := time.now()
+	transitions: [dynamic]Transition
 
-		// NOTE(sen) Sort the "open set" so that the lowest cost node is at the end
-		{
-			context.user_ptr = &total_costs
-			nodes_sort_proc :: proc(n1: Node, n2: Node) -> bool {
-				total_costs := cast(^map[Amps]int)context.user_ptr
-				n1_cost := total_costs[n1.amps]
-				n2_cost := total_costs[n2.amps]
-				/*fmt.println(n1_cost)
-				fmt.println(n2_cost)
-				print_amps(n1.amps)
-				print_amps(n2.amps)*/
-				assert(n1_cost != 0)
-				assert(n2_cost != 0)
-				return n1_cost > n2_cost
-			}
-			slice.sort_by(nodes[:], nodes_sort_proc)
-		}
+	time_spent_sorting := 0.0
 
-		node := pop(&nodes)
-		assert(node.occupancy == get_occupancy(node.amps))
-		time_get_node += time.duration_seconds(time.since(iteration_start))
+	for len(open_set) > 0 {
 
-		//print_amps(node.amps)
+		open_set_entry := pop(&open_set)
+		current_state := open_set_entry.state
+		f_score := open_set_entry.f_score
 
-		node_is_sorted := true
-		{
-			sort_check: for amp in node.amps {
-				switch pos in amp.pos {
-				case Room:
-					needed_room_index := get_needed_room_index(amp.kind)
-					if needed_room_index != pos.room {
-						node_is_sorted = false
-						break sort_check
-					}
-				case Hallway:
-					node_is_sorted = false
-					break sort_check
-				}
-			}
-		}
-
-		if node_is_sorted {
-			print_amps(node.amps)
-			for parent, ok := came_from[node.amps]; ok; parent, ok = came_from[parent] {
-				print_amps(parent)
-			}
-			fmt.println(costs_from_start[node.amps])
+		if current_state == target_state {
+			fmt.println(f_score)
 			break
 		}
 
-		// NOTE(sen) Find all possible moves
-		{
-			clear(&possible_moves)
-			for amp, amp_index in node.amps {
+		current_g_score := g_score[current_state]
 
-				room_hallway_positions := ROOM_HALLWAY_POSITIONS
+		clear(&transitions)
+		room_to_hallway_transitions(current_state, &transitions)
+		hallway_to_room_transitions(current_state, &transitions)
 
-				amp_target_room_index := get_needed_room_index(amp.kind)
-				amp_target_room_hallway := room_hallway_positions[amp_target_room_index]
+		for transition in transitions {
 
-				switch_pos: switch pos in amp.pos {
-				case Room:
-					// NOTE(sen) See if the amp is already where it needs to be
-					{
-						if pos.room == amp_target_room_index {
-							if pos.front {
-								if node.occupancy.rooms[pos.room].back == amp.kind {
-									break switch_pos
-								}
-							} else {
-								break switch_pos
-							}
-						}
+			tentative_g_score := current_g_score + transition.cost
+
+			transition_g_score, transition_g_score_exists := g_score[transition.state]
+
+			if !transition_g_score_exists || tentative_g_score < transition_g_score {
+
+				g_score[transition.state] = tentative_g_score
+
+				new_f_score := tentative_g_score + estimate_cost(transition.state)
+				new_open_set_entry := OpenSetEntry{transition.state, new_f_score}
+
+				append(&open_set, new_open_set_entry)
+
+				// NOTE(sen) Move backwards into place so that open_set remains sorted
+				time_sort_start := time.now()
+				for open_set_index := len(open_set) - 2; open_set_index >= 0; open_set_index -= 1 {
+					if open_set[open_set_index].f_score < new_f_score {
+						open_set[open_set_index], open_set[open_set_index + 1] =
+							open_set[open_set_index + 1], open_set[open_set_index]
 					}
-
-					// NOTE(sen) See if the room can be left
-					{
-						if !pos.front {
-							if node.occupancy.rooms[pos.room].front != nil {
-								break switch_pos
-							}
-						}
-					}
-
-					start_hallway_pos := [2]int{
-						room_hallway_positions[pos.room] - 1,
-						room_hallway_positions[pos.room] + 1,
-					}
-					steps := [2]int{-1, 1}
-					breaks := [2]int{-1, HALLWAY_LENGTH}
-
-					for start_hallway_pos, start_pos_index in start_hallway_pos {
-
-						total_steps := 1
-						if !pos.front {
-							total_steps += 1
-						}
-
-						dir_search: for cur_hallway_index := start_hallway_pos;
-						    cur_hallway_index != breaks[start_pos_index];
-						    cur_hallway_index += steps[start_pos_index] {
-
-							total_steps += 1
-
-							if cur_hallway_index == amp_target_room_hallway {
-
-								// NOTE(sen) See if target room is free
-								steps_to_ender := 1
-								going_to_front := true
-								{
-									if node.occupancy.rooms[amp_target_room_index].front != nil {
-										continue
-									}
-									back_occupant := node.occupancy.rooms[amp_target_room_index].back
-									if back_occupant != nil {
-										if back_occupant.(AmpKind) != amp.kind {
-											continue
-										}
-									} else {
-										going_to_front = false
-										steps_to_ender += 1
-									}
-								}
-
-								cost := get_cost_from_steps(total_steps + steps_to_ender, amp.kind)
-
-								append(
-									&possible_moves,
-									Move{amp_index, Room{amp_target_room_index, going_to_front}, cost},
-								)
-
-								break dir_search
-							}
-
-							facing_any_room := false
-							for room_hallway in room_hallway_positions {
-								if cur_hallway_index == room_hallway {
-									facing_any_room = true
-									break
-								}
-							}
-							if facing_any_room {
-								continue
-							}
-
-							if node.occupancy.hallway[cur_hallway_index] != nil {
-								break dir_search
-							}
-
-							cost := get_cost_from_steps(total_steps, amp.kind)
-
-							append(&possible_moves, Move{amp_index, Hallway(cur_hallway_index), cost})
-
-						}
-					}
-
-
-				case Hallway:
-					// NOTE(sen) See if target room can be reached
-					total_steps := 2
-					{
-						step := amp_target_room_hallway > int(pos) ? 1 : -1
-						for cur_hallway := int(pos) + step;
-						    cur_hallway != amp_target_room_hallway;
-						    cur_hallway += step {
-							total_steps += 1
-							if node.occupancy.hallway[cur_hallway] != nil {
-								break switch_pos
-							}
-						}
-					}
-
-					// NOTE(sen) See if target room is free
-					going_to_front := true
-					{
-						if node.occupancy.rooms[amp_target_room_index].front != nil {
-							break switch_pos
-						}
-						back_occupant := node.occupancy.rooms[amp_target_room_index].back
-						if back_occupant != nil {
-							if back_occupant.(AmpKind) != amp.kind {
-								break switch_pos
-							}
-						} else {
-							going_to_front = false
-							total_steps += 1
-						}
-					}
-
-					cost := get_cost_from_steps(total_steps, amp.kind)
-
-					append(
-						&possible_moves,
-						Move{amp_index, Room{amp_target_room_index, going_to_front}, cost},
-					)
-
 				}
-			}
-		}
+				time_sort_end := time.since(time_sort_start)
+				time_spent_sorting += time.duration_milliseconds(time_sort_end)
 
-		for move in possible_moves {
-
-			//fmt.println(move)
-
-			new_node := node
-			new_node.amps[move.amp_index].pos = move.pos
-
-			current_cost, current_cost_exists := costs_from_start[node.amps]
-			assert(current_cost_exists)
-
-			should_add := false
-			tentative_cost_from_start := current_cost + move.cost
-			if existing_cost_from_start, ok := costs_from_start[new_node.amps]; !ok {
-				should_add = true
-			} else if tentative_cost_from_start < existing_cost_from_start {
-				should_add = true
 			}
 
-			if !should_add {
-				continue
-			}
-
-			switch pos in node.amps[move.amp_index].pos {
-			case Room:
-				if pos.front {
-					new_node.occupancy.rooms[pos.room].front = nil
-				} else {
-					new_node.occupancy.rooms[pos.room].back = nil
-				}
-			case Hallway:
-				new_node.occupancy.hallway[int(pos)] = nil
-			}
-
-			switch pos in new_node.amps[move.amp_index].pos {
-			case Room:
-				if pos.front {
-					new_node.occupancy.rooms[pos.room].front = new_node.amps[move.amp_index].kind
-				} else {
-					new_node.occupancy.rooms[pos.room].back = new_node.amps[move.amp_index].kind
-				}
-			case Hallway:
-				new_node.occupancy.hallway[int(pos)] = new_node.amps[move.amp_index].kind
-			}
-
-			came_from[new_node.amps] = node.amps
-			costs_from_start[new_node.amps] = tentative_cost_from_start
-			new_est_cheap_cost := estimate_cheapest_cost(new_node.amps)
-			total_costs[new_node.amps] = tentative_cost_from_start + new_est_cheap_cost
-
-			already_in_nodes := false
-			for existing_node in nodes {
-				if existing_node.amps == new_node.amps {
-					already_in_nodes = true
-					assert(existing_node.occupancy == new_node.occupancy)
-					break
-				}
-			}
-			if !already_in_nodes {
-				append(&nodes, new_node)
-			}
-
-		}
-
-		time_total += time.duration_seconds(time.since(iteration_start))
-
-		if iteration_index % 100 == 0 {
-			fmt.println(iteration_index, len(nodes), time_get_node, time_total)
 		}
 
 	}
+
+	time_program_end := time.since(time_program_start)
+
+	fmt.println(time.duration_milliseconds(time_program_end), time_spent_sorting)
 
 }
